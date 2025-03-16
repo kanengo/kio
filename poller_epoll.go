@@ -3,178 +3,145 @@
 package kio
 
 import (
+	"errors"
 	"log/slog"
-	"net"
-	"strconv"
-	"sync"
-	"syscall"
+	"os"
 	_ "unsafe"
+
+	"github.com/kanengo/kio/errorx"
+	"golang.org/x/sys/unix"
 )
 
 const (
-	// EPOLLET .
-	EPOLLET = 0x80000000
+	// InitPollEventsCap represents the initial capacity of poller event-list.
+	InitPollEventsCap = 128
+	// MaxPollEventsCap is the maximum limitation of events that the poller can process.
+	MaxPollEventsCap = 1024
+	// MinPollEventsCap is the minimum limitation of events that the poller can process.
+	MinPollEventsCap = 32
+
+	ReadEvents        = unix.EPOLLIN | unix.EPOLLPRI
+	WriteEvents       = unix.EPOLLOUT
+	ReadWriteEvents   = ReadEvents | WriteEvents
+	ErrEvents         = unix.EPOLLERR | unix.EPOLLHUP
+	EdgeTriggerEvents = unix.EPOLLET | unix.EPOLLRDHUP
 )
 
 type poller struct {
-	*Engine
-	IsListener  bool
-	listenerFds []int
+	e *Engine
 
-	connections map[int]*Conn
-	mux         sync.RWMutex
-	efd         int
-	evfd        int
+	epfd int
+	evfd int
 }
 
+type eventList struct {
+	size   int
+	events []unix.EpollEvent
+}
+
+//go:norace
+func newEventList(size int) *eventList {
+	return &eventList{
+		size:   size,
+		events: make([]unix.EpollEvent, size),
+	}
+}
+
+//go:norace
+func (el *eventList) expand() {
+	if newSize := el.size << 1; newSize <= MaxPollEventsCap {
+		el.size = newSize
+		el.events = make([]unix.EpollEvent, newSize)
+	}
+}
+
+//go:norace
+func (el *eventList) shrink() {
+	if newSize := el.size >> 1; newSize >= MinPollEventsCap {
+		el.size = newSize
+		el.events = make([]unix.EpollEvent, newSize)
+	}
+}
+
+//go:norace
 func newPoller(e *Engine, isListener bool) (p *poller, err error) {
 	var efd int
-	efd, err = syscall.EpollCreate1(0)
+	efd, err = unix.EpollCreate1(unix.EPOLL_CLOEXEC)
 	if err != nil {
 		slog.Error("start listener failed", "err", err)
 		return nil, err
 	}
-
 	defer func() {
 		if err != nil {
-			syscall.Close(efd)
-			for _, fd := range p.listenerFds {
-				syscall.Close(fd)
-			}
+			unix.Close(efd)
 		}
 	}()
-	if isListener {
-		domain := syscall.AF_INET6
-		sotype := syscall.SOCK_STREAM
-		proto := syscall.IPPROTO_IP
 
-		isIpv6 := true
-		switch p.NetWork {
-		case NetworkTCP, NetworkTCP4, NetworkTCP6:
-			if p.NetWork == NetworkTCP4 {
-				domain = syscall.AF_INET
-				isIpv6 = false
-			}
-		case NetworkUDP, NetworkUDP4, NetworkUDP6:
-			if p.NetWork == NetworkUDP4 {
-				domain = syscall.AF_INET
-				isIpv6 = false
-			}
-			sotype = syscall.SOCK_DGRAM
-		case NetworkUNIX:
-			isIpv6 = false
-			domain = syscall.AF_UNIX
-			sotype = syscall.SOCK_STREAM
-		}
-
-		for _, addr := range p.ListenAddrs {
-			var listenerFd int
-			listenerFd, err = syscall.Socket(domain, sotype, proto)
-			if err != nil {
-				break
-			}
-			err = syscall.SetNonblock(listenerFd, true)
-			if err != nil {
-				break
-			}
-			if p.NetWork == NetworkTCP || p.NetWork == NetworkUDP {
-				err = syscall.SetsockoptInt(listenerFd, syscall.AF_INET6, syscall.IPV6_V6ONLY, 0)
-				if err != nil {
-					break
-				}
-			}
-			err = syscall.SetsockoptInt(listenerFd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
-			if err != nil {
-				break
-			}
-			var host, port string
-			host, port, err = net.SplitHostPort(addr)
-			if err != nil {
-				break
-			}
-			var portInt int
-			portInt, err = strconv.Atoi(port)
-			if err != nil {
-				break
-			}
-			var sockAddr syscall.Sockaddr
-			if p.NetWork == NetworkUNIX {
-				sa := &syscall.SockaddrUnix{
-					Name: addr,
-				}
-				sockAddr = sa
-			} else {
-				if isIpv6 {
-					sa := &syscall.SockaddrInet6{
-						Port: portInt,
-					}
-					copy(sa.Addr[:], net.ParseIP(host).To16())
-					sockAddr = sa
-				} else {
-					sa := &syscall.SockaddrInet4{
-						Port: portInt,
-					}
-					copy(sa.Addr[:], net.ParseIP(host).To4())
-					sockAddr = sa
-				}
-			}
-			err = syscall.Bind(listenerFd, sockAddr)
-			if err != nil {
-				break
-			}
-			err = syscall.Listen(listenerFd, listenerBacklog())
-			if err != nil {
-				break
-			}
-			p.listenerFds = append(p.listenerFds, listenerFd)
-		}
-
-		if err != nil {
-			slog.Error("start listener failed", "err", err)
-			return nil, err
-		}
-	}
-
-	r0, _, e0 := syscall.Syscall(syscall.SYS_EVENTFD2, 0, syscall.O_NONBLOCK, 0)
-	if e0 != 0 {
-		slog.Error("Syscall", "err", e0)
-		syscall.Close(efd)
-		return nil, err
-	}
-	err = syscall.EpollCtl(efd, syscall.EPOLL_CTL_ADD, int(r0), &syscall.EpollEvent{
-		Events: syscall.EPOLLIN,
-		Fd:     int32(r0),
-	})
+	var e0 int
+	e0, err = unix.Eventfd(0, unix.EFD_NONBLOCK|unix.EFD_CLOEXEC)
 	if err != nil {
-		syscall.Close(int(r0))
-		return nil, err
+		return
 	}
-	for _, listenerFd := range p.listenerFds {
-		err = syscall.EpollCtl(efd, syscall.EPOLL_CTL_ADD, listenerFd, &syscall.EpollEvent{
-			Events: syscall.EPOLLIN | EPOLLET,
-			Fd:     int32(listenerFd),
-		})
-		if err != nil {
-			syscall.Close(efd)
-			for _, fd := range p.listenerFds {
-				syscall.Close(fd)
-			}
-			return nil, err
-		}
+	err = p.addRead(e0)
+	if err != nil {
+		unix.Close(e0)
+		return
+	}
+	p.evfd = e0
+
+	p = &poller{
+		e:    e,
+		epfd: efd,
+		evfd: e0,
 	}
 
-	return &poller{
-		Engine:      e,
-		IsListener:  isListener,
-		listenerFds: make([]int, 0, len(e.ListenAddrs)),
-
-		efd:  efd,
-		evfd: efd,
-	}, nil
+	return p, nil
 }
 
-func (p *poller) start() {
+//go:norace
+func (p *poller) polling(handler func(ev unix.EpollEvent) error) error {
+	el := newEventList(InitPollEventsCap)
 
+	msec := -1
+	for {
+		n, err := unix.EpollWait(p.epfd, el.events, msec)
+		if err != nil {
+			p.e.logger.Error("epoll wait failed", "err", err)
+			return err
+		}
+		for i := range n {
+			ev := el.events[i]
+			if err := handler(ev); err != nil {
+				p.e.logger.Error("handle event failed", "err", err)
+				if errors.Is(err, errorx.ErrorAcceptSocket) {
+					return err
+				}
+			}
+		}
+	}
+}
+
+func (p *poller) close() {
+	unix.Close(p.evfd)
+	unix.Close(p.epfd)
+}
+
+func (p *poller) addRead(fd int) error {
+	var ev unix.EpollEvent
+	ev.Events = ReadEvents | ErrEvents | EdgeTriggerEvents
+	return os.NewSyscallError("epoll_ctl add", unix.EpollCtl(p.epfd, unix.EPOLL_CTL_ADD, fd, &ev))
+}
+
+func (p *poller) addWrite(fd int) error {
+	var ev unix.EpollEvent
+	ev.Events = WriteEvents | ErrEvents | EdgeTriggerEvents
+	return os.NewSyscallError("epoll_ctl add", unix.EpollCtl(p.epfd, unix.EPOLL_CTL_ADD, fd, &ev))
+}
+
+func (p *poller) addReadWrite(fd int) error {
+	var ev unix.EpollEvent
+	ev.Events = ReadEvents | WriteEvents | ErrEvents | EdgeTriggerEvents
+	return os.NewSyscallError("epoll_ctl add", unix.EpollCtl(p.epfd, unix.EPOLL_CTL_ADD, fd, &ev))
 }
 
 //go:linkname listenerBacklog net.listenerBacklog

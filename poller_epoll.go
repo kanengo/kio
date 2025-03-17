@@ -77,6 +77,11 @@ func newPoller(e *Engine, isListener bool) (p *poller, err error) {
 		}
 	}()
 
+	p = &poller{
+		e:    e,
+		epfd: efd,
+	}
+
 	var e0 int
 	e0, err = unix.Eventfd(0, unix.EFD_NONBLOCK|unix.EFD_CLOEXEC)
 	if err != nil {
@@ -88,12 +93,6 @@ func newPoller(e *Engine, isListener bool) (p *poller, err error) {
 		return
 	}
 	p.evfd = e0
-
-	p = &poller{
-		e:    e,
-		epfd: efd,
-		evfd: e0,
-	}
 
 	return p, nil
 }

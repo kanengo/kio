@@ -27,7 +27,7 @@ type EventHandler interface {
 }
 
 //go:norace
-func NewEngine(config Config) *Engine {
+func NewEngine(config Config) (e *Engine, err error) {
 	if config.PollerNum <= 0 {
 		config.PollerNum = runtime.NumCPU()
 	}
@@ -39,10 +39,21 @@ func NewEngine(config Config) *Engine {
 	}
 
 	rd := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0))
-	return &Engine{
-		Config: config,
-		rd:     rd,
+
+	e = &Engine{
+		Config:        config,
+		rd:            rd,
+		eventHandlers: make(map[string]EventHandler),
+		mainLoop:      nil,
+		loops:         make([]*eventLoop, 0, config.PollerNum),
 	}
+
+	e.mainLoop, err = newEventLoop(e, true)
+	if err != nil {
+		return
+	}
+
+	return e, nil
 }
 
 //go:norace
@@ -81,4 +92,11 @@ func (e *Engine) addConn(conn *Conn) error {
 //go:norace
 func (e *Engine) Start() error {
 	return nil
+}
+
+func (e *Engine) Close() {
+	e.mainLoop.stop()
+	for _, loop := range e.loops {
+		loop.stop()
+	}
 }

@@ -87,7 +87,7 @@ func newPoller(e *Engine, isListener bool) (p *poller, err error) {
 	if err != nil {
 		return
 	}
-	err = p.addRead(e0)
+	err = p.addRead(e0, true)
 	if err != nil {
 		unix.Close(e0)
 		return
@@ -125,21 +125,30 @@ func (p *poller) close() {
 	unix.Close(p.epfd)
 }
 
-func (p *poller) addRead(fd int) error {
+func (p *poller) addRead(fd int, et bool) error {
 	var ev unix.EpollEvent
-	ev.Events = ReadEvents | ErrEvents | EdgeTriggerEvents
+	ev.Events = ReadEvents | ErrEvents
+	if et {
+		ev.Events |= EdgeTriggerEvents
+	}
 	return os.NewSyscallError("epoll_ctl add", unix.EpollCtl(p.epfd, unix.EPOLL_CTL_ADD, fd, &ev))
 }
 
-func (p *poller) addWrite(fd int) error {
+func (p *poller) addWrite(fd int, et bool) error {
 	var ev unix.EpollEvent
-	ev.Events = WriteEvents | ErrEvents | EdgeTriggerEvents
+	ev.Events = WriteEvents | ErrEvents
+	if et {
+		ev.Events |= EdgeTriggerEvents
+	}
 	return os.NewSyscallError("epoll_ctl add", unix.EpollCtl(p.epfd, unix.EPOLL_CTL_ADD, fd, &ev))
 }
 
-func (p *poller) addReadWrite(fd int) error {
+func (p *poller) addReadWrite(fd int, et bool) error {
 	var ev unix.EpollEvent
-	ev.Events = ReadEvents | WriteEvents | ErrEvents | EdgeTriggerEvents
+	ev.Events = ReadEvents | WriteEvents | ErrEvents
+	if et {
+		ev.Events |= EdgeTriggerEvents
+	}
 	return os.NewSyscallError("epoll_ctl add", unix.EpollCtl(p.epfd, unix.EPOLL_CTL_ADD, fd, &ev))
 }
 

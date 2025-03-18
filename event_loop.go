@@ -81,7 +81,7 @@ func newEventLoop(e *Engine, isListener bool) (el *eventLoop, err error) {
 			if err != nil {
 				return
 			}
-			if err = p.addRead(listenerFd); err != nil {
+			if err = p.addRead(listenerFd, false); err != nil {
 				return
 			}
 
@@ -97,7 +97,7 @@ func newEventLoop(e *Engine, isListener bool) (el *eventLoop, err error) {
 
 //go:norace
 func (el *eventLoop) addConn(conn *Conn) error {
-	if err := el.poller.addReadWrite(conn.Fd); err != nil {
+	if err := el.poller.addReadWrite(conn.Fd, true); err != nil {
 		return err
 	}
 	el.mux.Lock()

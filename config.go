@@ -37,6 +37,7 @@ type Config struct {
 	PollerNum     int
 	ThreadPoolNum int
 	logger        *slog.Logger
+	ReadBufSize   int
 }
 
 //go:norace

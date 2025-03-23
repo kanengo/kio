@@ -1,2 +1,4 @@
+github.com/kanengo/ku v0.0.0-20250323074459-86856b70c932 h1:e61iWFWCetFdOt0vmfDjsaD3thFhfUo9Fpavy+9FSZw=
+github.com/kanengo/ku v0.0.0-20250323074459-86856b70c932/go.mod h1:8KRZDCOc7QI1ASAejGt8fGM8Kitx6aDzPZoREzlyZ+M=
 golang.org/x/sys v0.31.0 h1:ioabZlmFYtWhL+TRYpcnNlLwhyxaM9kWTDEmfnprqik=
 golang.org/x/sys v0.31.0/go.mod h1:BJP2sWEmIv4KK5OTEluFJCKSidICx8ciO85XgH3Ak8k=

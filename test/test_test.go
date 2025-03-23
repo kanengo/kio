@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"testing"
+	"time"
 )
 
 func TestParseIp(t *testing.T) {
@@ -27,3 +28,9 @@ func TestParseIp(t *testing.T) {
 // func TestLinkListenerBacklog(t *testing.T) {
 // 	fmt.Println(listenerBacklog())
 // }
+
+func TestPrintSomething(t *testing.T) {
+	fmt.Println(8 & 7)
+	fmt.Println(1 << 10)
+	fmt.Println(int64(time.Now().UnixNano() % 5))
+}

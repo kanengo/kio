@@ -16,13 +16,16 @@ type Engine struct {
 	loops         []*eventLoop
 
 	rd *rand.Rand
+
+	// workerPool *goroutinex.Pool
 }
 
 type EventHandler interface {
 	Name() string
 	OnOpen(c *Conn)
 	OnClose(c *Conn)
-	OnRead(c *Conn, data []byte)
+
+	// OnData data 在方法返回后,会继续被使用,所以如果要异步使用data,必须copy一份
 	OnData(c *Conn, data []byte)
 }
 
@@ -40,12 +43,15 @@ func NewEngine(config Config) (e *Engine, err error) {
 
 	rd := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0))
 
+	// wp := goroutinex.NewPool(goroutinex.Config{})
+
 	e = &Engine{
 		Config:        config,
 		rd:            rd,
 		eventHandlers: make(map[string]EventHandler),
 		mainLoop:      nil,
 		loops:         make([]*eventLoop, 0, config.PollerNum),
+		// workerPool:    wp,
 	}
 
 	e.mainLoop, err = newEventLoop(e, true)

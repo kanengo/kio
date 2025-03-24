@@ -4,6 +4,7 @@ import (
 	"net"
 	"sync/atomic"
 
+	"github.com/kanengo/ku/bufferx/ring"
 	"golang.org/x/sys/unix"
 )
 
@@ -20,7 +21,7 @@ type Conn struct {
 
 	el *eventLoop
 
-	buffer []byte
+	inBuffer *ring.Buffer
 }
 
 func (c *Conn) close(err error) error {
